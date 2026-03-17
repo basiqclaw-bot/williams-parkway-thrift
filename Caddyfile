@@ -1,0 +1,13 @@
+williams-parkway-thrift.basiq360.tech {
+    reverse_proxy localhost:3005
+    
+    # Enable compression
+    encode gzip
+    
+    # Security headers
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        X-XSS-Protection "1; mode=block"
+    }
+}
