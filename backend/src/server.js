@@ -4,16 +4,21 @@ const path = require('path');
 const cors = require('cors');
 const session = require('express-session');
 const { v4: uuidv4 } = require('uuid');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Admin credentials (hashed password for 'admin123')
+const ADMIN_USERNAME = 'admin';
+const ADMIN_PASSWORD_HASH = '$2a$10$GNwJ45YpIJQQKeWNmG0e4.9MVoRn5axaEMwc8PtMDkrcTOGmrgSpW'; // admin123
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Session for cart management
+// Session for cart and admin management
 app.use(session({
   secret: 'williams-parkway-thrift-secret',
   resave: false,
@@ -38,6 +43,19 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// === ADMIN AUTH MIDDLEWARE ===
+const requireAdminAuth = (req, res, next) => {
+  if (req.session.isAdmin) {
+    return next();
+  }
+  // For API requests, return 401
+  if (req.path.startsWith('/api/admin')) {
+    return res.status(401).json({ error: 'Unauthorized. Please login.' });
+  }
+  // For page requests, redirect to login
+  res.redirect('/admin/login');
+};
 
 // === API ROUTES ===
 
@@ -269,10 +287,47 @@ app.post('/api/orders', (req, res) => {
   });
 });
 
-// === ADMIN API (Basic auth can be added later) ===
+// === ADMIN AUTH ROUTES ===
+
+// Admin login
+app.post('/api/admin/login', (req, res) => {
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+  
+  if (username !== ADMIN_USERNAME) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+  
+  bcrypt.compare(password, ADMIN_PASSWORD_HASH, (err, isMatch) => {
+    if (err || !isMatch) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    
+    req.session.isAdmin = true;
+    req.session.adminLoginTime = new Date().toISOString();
+    
+    res.json({ message: 'Login successful', success: true });
+  });
+});
+
+// Admin logout
+app.post('/api/admin/logout', (req, res) => {
+  req.session.isAdmin = false;
+  res.json({ message: 'Logged out successfully' });
+});
+
+// Check admin auth status
+app.get('/api/admin/check-auth', (req, res) => {
+  res.json({ isAdmin: !!req.session.isAdmin });
+});
+
+// === ADMIN API (Protected) ===
 
 // Get all orders
-app.get('/api/admin/orders', (req, res) => {
+app.get('/api/admin/orders', requireAdminAuth, (req, res) => {
   db.all('SELECT * FROM orders ORDER BY created_at DESC', [], (err, rows) => {
     if (err) {
       return res.status(500).json({ error: err.message });
@@ -287,7 +342,7 @@ app.get('/api/admin/orders', (req, res) => {
 });
 
 // Update order status
-app.post('/api/admin/orders/:id/status', (req, res) => {
+app.post('/api/admin/orders/:id/status', requireAdminAuth, (req, res) => {
   const { status } = req.body;
   const validStatuses = ['pending', 'confirmed', 'ready', 'completed', 'cancelled'];
   
@@ -304,7 +359,7 @@ app.post('/api/admin/orders/:id/status', (req, res) => {
 });
 
 // Add new product
-app.post('/api/admin/products', (req, res) => {
+app.post('/api/admin/products', requireAdminAuth, (req, res) => {
   const { name, description, price, category, condition, size, image_url } = req.body;
   
   if (!name || !price) {
@@ -325,7 +380,7 @@ app.post('/api/admin/products', (req, res) => {
 });
 
 // Update product
-app.post('/api/admin/products/:id', (req, res) => {
+app.post('/api/admin/products/:id', requireAdminAuth, (req, res) => {
   const { name, description, price, category, condition, size, image_url, status } = req.body;
   
   db.run(
@@ -350,8 +405,16 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(frontendPath, 'williams-parkway-thrift-shop (4) (2).html'));
 });
 
-// Serve admin panel
-app.get('/admin', (req, res) => {
+// Serve admin login page
+app.get('/admin/login', (req, res) => {
+  if (req.session.isAdmin) {
+    return res.redirect('/admin');
+  }
+  res.sendFile(path.join(__dirname, '../public/admin/login.html'));
+});
+
+// Serve admin panel (protected)
+app.get('/admin', requireAdminAuth, (req, res) => {
   res.sendFile(path.join(__dirname, '../public/admin/index.html'));
 });
 
@@ -363,4 +426,5 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
+  console.log(`Admin panel: http://localhost:${PORT}/admin`);
 });
